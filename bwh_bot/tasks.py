@@ -13,6 +13,9 @@ def _format_date_range(from_date, to_date):
 
 def send_daily_leave_notification():
 	"""Daily cron: notify whitelisted chats about employees on approved leave today."""
+	if not frappe.db.exists("DocType", "Leave Application"):
+		return
+
 	current_day = today()
 	leaves = frappe.get_all(
 		"Leave Application",
@@ -41,6 +44,9 @@ def send_daily_leave_notification():
 
 def send_daily_wfh_notification():
 	"""Daily cron: notify whitelisted chats about employees working from home today."""
+	if not frappe.db.exists("DocType", "Attendance Request"):
+		return
+
 	current_day = today()
 	requests = frappe.get_all(
 		"Attendance Request",
@@ -69,6 +75,9 @@ def send_daily_wfh_notification():
 
 def create_monthly_petty_cash_journal_entry():
 	"""Monthly cron: aggregate previous month's petty cash usage into a draft Journal Entry."""
+	if not frappe.db.exists("DocType", "Journal Entry"):
+		return
+
 	settings = frappe.get_single("BWH Bot Settings")
 	cash_account = settings.default_cash_account
 	company = settings.default_company
@@ -114,29 +123,35 @@ def create_monthly_petty_cash_journal_entry():
 			)
 			continue
 
-		accounts.append({
-			"account": category_account,
-			"debit_in_account_currency": row.total,
-			"credit_in_account_currency": 0,
-		})
+		accounts.append(
+			{
+				"account": category_account,
+				"debit_in_account_currency": row.total,
+				"credit_in_account_currency": 0,
+			}
+		)
 		grand_total += row.total
 
 	if not accounts:
 		return
 
 	# Credit side: Cash In Hand
-	accounts.append({
-		"account": cash_account,
-		"debit_in_account_currency": 0,
-		"credit_in_account_currency": grand_total,
-	})
+	accounts.append(
+		{
+			"account": cash_account,
+			"debit_in_account_currency": 0,
+			"credit_in_account_currency": grand_total,
+		}
+	)
 
-	jv = frappe.get_doc({
-		"doctype": "Journal Entry",
-		"posting_date": to_date,
-		"company": company,
-		"voucher_type": "Journal Entry",
-		"user_remark": f"Petty Cash Summary for {month_label}",
-		"accounts": accounts,
-	})
+	jv = frappe.get_doc(
+		{
+			"doctype": "Journal Entry",
+			"posting_date": to_date,
+			"company": company,
+			"voucher_type": "Journal Entry",
+			"user_remark": f"Petty Cash Summary for {month_label}",
+			"accounts": accounts,
+		}
+	)
 	jv.insert()

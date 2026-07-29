@@ -20,6 +20,16 @@ class BotConversation:
 	command_description = ""
 	title = ""
 
+	# HR-backed flows (leave, WFH) need the sender resolved to an Employee.
+	# Flows that only touch non-HR doctypes set this to False so they keep
+	# working on sites without Frappe HR installed.
+	requires_employee = True
+
+	# Doctypes this flow reads or writes that ship with another app. Commands are
+	# registered process-wide, so a site missing that app would otherwise fail
+	# mid-conversation with a traceback instead of a readable message.
+	required_doctypes = ()
+
 	def __init_subclass__(cls, **kwargs):
 		super().__init_subclass__(**kwargs)
 		if cls.handler_name:
@@ -41,16 +51,18 @@ class BotConversation:
 		if existing:
 			return frappe.get_doc("Telegram Conversation State", existing)
 
-		state = frappe.get_doc({
-			"doctype": "Telegram Conversation State",
-			"chat_id": str(chat_id),
-			"telegram_user_id": str(telegram_user_id),
-			"handler": self.handler_name,
-			"step": initial_step,
-			"is_active": 1,
-			"data": json.dumps({}),
-			"expires_at": frappe.utils.add_to_date(None, hours=1),
-		})
+		state = frappe.get_doc(
+			{
+				"doctype": "Telegram Conversation State",
+				"chat_id": str(chat_id),
+				"telegram_user_id": str(telegram_user_id),
+				"handler": self.handler_name,
+				"step": initial_step,
+				"is_active": 1,
+				"data": json.dumps({}),
+				"expires_at": frappe.utils.add_to_date(None, hours=1),
+			}
+		)
 		state.insert(ignore_permissions=True)
 		return state
 
@@ -99,10 +111,27 @@ class BotConversation:
 		except Exception:
 			pass
 
-		employee = get_employee_from_user(frappe.session.user)
-		if not employee:
-			send_message(chat_id, "You are not linked to any active employee record.", reply_to_message_id=message_id, message_thread_id=message_thread_id)
+		missing = self.missing_doctypes()
+		if missing:
+			send_message(
+				chat_id,
+				f"This command needs {', '.join(missing)}, which is not installed on this site.",
+				reply_to_message_id=message_id,
+				message_thread_id=message_thread_id,
+			)
 			return
+
+		employee = None
+		if self.requires_employee:
+			employee = get_employee_from_user(frappe.session.user)
+			if not employee:
+				send_message(
+					chat_id,
+					"You are not linked to any active employee record.",
+					reply_to_message_id=message_id,
+					message_thread_id=message_thread_id,
+				)
+				return
 
 		state = self.get_or_create_state(chat_id, message["from"]["id"])
 		self.update_state(state, "start", {"employee": employee, "message_thread_id": message_thread_id})
@@ -153,7 +182,8 @@ class BotConversation:
 			data = self.get_data(state)
 			header = self._build_header(data)
 			edit_message_text(
-				chat_id, message_id,
+				chat_id,
+				message_id,
 				f"{header}\n\nReply to this message with the <b>from date</b> (e.g. 25 Mar 2026):",
 				parse_mode="HTML",
 			)
@@ -165,7 +195,8 @@ class BotConversation:
 			data = self.get_data(state)
 			header = self._build_header(data)
 			edit_message_text(
-				chat_id, message_id,
+				chat_id,
+				message_id,
 				f"{header}\n\nReply to this message with the <b>to date</b> (e.g. 28 Mar 2026):",
 				parse_mode="HTML",
 			)
@@ -220,6 +251,13 @@ class BotConversation:
 		pass
 
 	# --- Helpers ---
+
+	def missing_doctypes(self):
+		"""Doctypes this flow needs that are absent from the current site."""
+		required = list(self.required_doctypes)
+		if self.requires_employee:
+			required.append("Employee")
+		return [doctype for doctype in required if not frappe.db.exists("DocType", doctype)]
 
 	def _build_header(self, data):
 		"""Build a header string from accumulated state data. Override for custom headers."""

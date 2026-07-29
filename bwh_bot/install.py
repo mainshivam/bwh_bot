@@ -29,4 +29,13 @@ def after_migrate():
 
 
 def _make_custom_fields():
-	create_custom_fields(CUSTOM_FIELDS, ignore_validate=True)
+	# The HR doctypes we extend ship with Frappe HR, which is optional — the bot
+	# also runs on sites that only use the non-HR flows. Skip anything missing;
+	# after_migrate re-runs this, so the fields appear if HR is installed later.
+	fields = {
+		doctype: definitions
+		for doctype, definitions in CUSTOM_FIELDS.items()
+		if frappe.db.exists("DocType", doctype)
+	}
+	if fields:
+		create_custom_fields(fields, ignore_validate=True)
